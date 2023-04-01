@@ -1,13 +1,13 @@
 package com.lstudio.bloctomvikotlinplugin.generator
 
 import com.intellij.lang.jvm.JvmParameter
-import com.intellij.lang.jvm.types.JvmType
 import com.intellij.openapi.project.Project
 import com.intellij.psi.PsiDirectory
 import com.intellij.psi.PsiMethod
 import com.intellij.psi.PsiPrimitiveType
 import com.intellij.psi.impl.source.PsiClassReferenceType
 import com.lstudio.bloctomvikotlinplugin.Utils.createKotlinFileFromText
+import com.lstudio.bloctomvikotlinplugin.qualifiedName
 import com.lstudio.bloctomvikotlinplugin.toKotlinType
 import org.jetbrains.kotlin.asJava.classes.KtLightClass
 import org.jetbrains.kotlin.asJava.toLightClass
@@ -111,6 +111,4 @@ object StoreGenerator {
         )
         return ignoreList.contains(param.type.qualifiedName())
     }
-
-    private fun JvmType.qualifiedName() = (this as? PsiClassReferenceType)?.resolve()?.qualifiedName
 }

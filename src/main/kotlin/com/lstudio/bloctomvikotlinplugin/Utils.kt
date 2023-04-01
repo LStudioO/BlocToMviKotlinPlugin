@@ -1,10 +1,12 @@
 package com.lstudio.bloctomvikotlinplugin
 
+import com.intellij.lang.jvm.types.JvmType
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.project.Project
 import com.intellij.psi.*
 import com.intellij.psi.codeStyle.CodeStyleManager
 import com.intellij.psi.codeStyle.JavaCodeStyleManager
+import com.intellij.psi.impl.source.PsiClassReferenceType
 import com.intellij.util.containers.ContainerUtil
 import org.jetbrains.kotlin.idea.KotlinLanguage
 import org.jetbrains.kotlin.idea.inspections.KotlinUnusedImportInspection
@@ -38,9 +40,13 @@ object Utils {
             name: String,
             text: String,
     ): KtFile {
-        val file = PsiFileFactory.getInstance(this).createFileFromText(name, KotlinLanguage.INSTANCE, text) as KtFile
-        formatCode(file)
-        return file
+        var ktFile: KtFile? = null
+        executeWrite {
+            val file = PsiFileFactory.getInstance(this).createFileFromText(name, KotlinLanguage.INSTANCE, text) as KtFile
+            formatCode(file)
+            ktFile = file
+        }
+        return requireNotNull(ktFile)
     }
 
     private fun Project.removeUnusedKotlinImports(file: KtFile) {
@@ -90,3 +96,5 @@ fun PsiPrimitiveType.toKotlinType(): String? {
         else -> null
     }
 }
+
+fun JvmType.qualifiedName() = (this as? PsiClassReferenceType)?.resolve()?.qualifiedName

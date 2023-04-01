@@ -5,6 +5,7 @@ import com.intellij.openapi.project.Project
 import com.lstudio.bloctomvikotlinplugin.Utils.deleteUnusedImports
 import com.lstudio.bloctomvikotlinplugin.Utils.writeKotlinFile
 import com.lstudio.bloctomvikotlinplugin.action.BlocToMviKotlinAction
+import com.lstudio.bloctomvikotlinplugin.generator.StoreFactoryGenerator
 import com.lstudio.bloctomvikotlinplugin.generator.StoreGenerator
 import org.jetbrains.kotlin.asJava.toLightClass
 import org.jetbrains.kotlin.psi.KtClass
@@ -19,7 +20,8 @@ class BlocToStoreMigration(
         val lightClass = bloc.toLightClass()
         val name = bloc.name ?: return
         val stateClass = getStateClassFromBloc(bloc) ?: return
-        val allFunctions = lightClass?.methods.orEmpty()
+        val allFunctions = lightClass?.methods.orEmpty().toList()
+        val storeInterfaceName = name.replace("Bloc", "Store")
 
         LOG.info("Name $name")
 
@@ -28,8 +30,8 @@ class BlocToStoreMigration(
                 project = project,
                 directory = directory,
                 stateClass = stateClass,
-                name = name.replace("Bloc", "Store"),
-                blocFunctions = allFunctions.toList(),
+                name = storeInterfaceName,
+                blocFunctions = allFunctions,
         )
 
         // Write file
@@ -38,6 +40,23 @@ class BlocToStoreMigration(
         // Remove unused imports
         if (savedStoreFile != null) {
             project.deleteUnusedImports(savedStoreFile)
+        }
+
+        // Generate in-memory StoreFactory file
+        val storeFactoryFile = StoreFactoryGenerator.generate(
+                project = project,
+                directory = directory,
+                stateClass = stateClass,
+                storeInterfaceName = storeInterfaceName,
+                bloc = bloc,
+        )
+
+        // Write file
+        val savedStoreFactoryFile = project.writeKotlinFile(directory, storeFactoryFile)
+
+        // Remove unused imports
+        if (savedStoreFactoryFile != null) {
+            project.deleteUnusedImports(savedStoreFactoryFile)
         }
     }
 
