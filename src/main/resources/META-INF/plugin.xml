@@ -29,8 +29,8 @@
         />
     </extensions>
     <actions>
-        <action id="com.lstudio.bloctomvikotlinplugin.BlocToMviKotlinAction"
-                class="com.lstudio.bloctomvikotlinplugin.BlocToMviKotlinAction" text="BlocToMVIKotlin"
+        <action id="com.lstudio.bloctomvikotlinplugin.action.BlocToMviKotlinAction"
+                class="com.lstudio.bloctomvikotlinplugin.action.BlocToMviKotlinAction" text="BlocToMVIKotlin"
                 description="Bloc to MVIKotlin">
             <add-to-group group-id="RefactoringMenu" anchor="last"/>
             <keyboard-shortcut keymap="$default" first-keystroke="ctrl meta alt B"/>
