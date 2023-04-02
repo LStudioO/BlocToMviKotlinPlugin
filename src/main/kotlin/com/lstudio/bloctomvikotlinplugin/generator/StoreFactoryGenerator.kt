@@ -1,17 +1,24 @@
 package com.lstudio.bloctomvikotlinplugin.generator
 
+import com.android.tools.idea.kotlin.getQualifiedName
 import com.intellij.openapi.project.Project
 import com.intellij.psi.PsiClass
 import com.intellij.psi.PsiDirectory
+import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiMethod
 import com.intellij.psi.impl.source.PsiClassReferenceType
 import com.intellij.psi.search.LocalSearchScope
 import com.intellij.psi.search.searches.ReferencesSearch
+import com.intellij.psi.util.PsiTreeUtil
+import com.intellij.psi.util.elementType
 import com.lstudio.bloctomvikotlinplugin.Utils.createKotlinFileFromText
 import com.lstudio.bloctomvikotlinplugin.qualifiedName
+import org.jetbrains.kotlin.asJava.classes.KtLightClass
 import org.jetbrains.kotlin.asJava.toLightClass
 import org.jetbrains.kotlin.idea.core.getPackage
 import org.jetbrains.kotlin.idea.refactoring.fqName.fqName
+import org.jetbrains.kotlin.lexer.KtTokens
+import org.jetbrains.kotlin.nj2k.postProcessing.resolve
 import org.jetbrains.kotlin.nj2k.postProcessing.type
 import org.jetbrains.kotlin.psi.*
 import org.jetbrains.kotlin.psi.psiUtil.getParentOfType
@@ -31,43 +38,38 @@ object StoreFactoryGenerator {
         val blocFunctions = bloc.toLightClass()?.methods.orEmpty()
         val constructorFunction = blocFunctions.firstOrNull { it.isConstructor }
         val dependencyClasses = findDependencies(constructorFunction)
+        val ktClassInitializers = bloc.getAnonymousInitializers()
 
-        var importSection: String = dependencyClasses
-                .mapNotNull { it.second.qualifiedName }
-                .plus(stateLightClass?.qualifiedName)
-                .map { "import $it" }
-                .joinToString(separator = "\n") { it }
+        var importSection: String = createImportUserDependencies(
+                dependencyClasses = dependencyClasses,
+                stateLightClass = stateLightClass,
+        )
 
-        val userDependenciesString = dependencyClasses.map { dep ->
-            "private val ${dep.first}: ${dep.second.name},"
-        }.joinToString(separator = "\n") { it }.removeSuffix("\n")
-
-        val mviKotlinDependencies = """
-                private val storeFactory: StoreFactory,
-                private val dispatcherProvider: CoroutineDispatcherProvider,
-        """.trimIndent()
-
-        val dependencies = if (userDependenciesString.isEmpty()) {
-            mviKotlinDependencies
-        } else {
-            mviKotlinDependencies + "\n" + userDependenciesString
-        }
+        val dependencies = createConstructorUserDependencies(dependencyClasses)
 
         val coroutineScopeFunctions = findCoroutineScopeUsages(bloc)
         val coroutineScopeFunctionsString = coroutineScopeFunctions
                 .joinToString(separator = "\n\n") {
                     // Add tabs to make a commented code good-looking
                     val lines = it.text.lines()
-                    lines.first() + "\n" +
-                            lines.drop(1).map { line -> "                $line" }.joinToString(separator = "\n") { it }
+                    addExtraTabAndJoinToString(lines)
                 }
 
-        val needBootstrapper = coroutineScopeFunctions.isNotEmpty()
+        val initBlocsBody = ktClassInitializers.mapNotNull { it.body?.text }
+        val initBlocsBodyString = initBlocsBody
+                .joinToString(separator = "\n\n") {
+                    // Add tabs to make a commented code good-looking
+                    val lines = it.lines()
+                    addExtraTabAndJoinToString(lines)
+                }
+
+        val needBootstrapper = coroutineScopeFunctions.isNotEmpty() || initBlocsBody.isNotEmpty()
 
         val bootstrapper = if (needBootstrapper) {
             """
             coroutineBootstrapper {
                 /*
+                $initBlocsBodyString
                 $coroutineScopeFunctionsString
                 */
             }
@@ -80,9 +82,10 @@ object StoreFactoryGenerator {
             importSection = "import com.arkivanov.mvikotlin.extensions.coroutines.coroutineBootstrapper\n$importSection"
         }
 
-        val executorFactoryImplementation = """
-            
-        """.trimIndent()
+        val executorFactoryImplementation = generateExecutorFactoryImplementation(
+                storeInterfaceName = storeInterfaceName,
+                blocFunctions = bloc.declarations.filterIsInstance<KtNamedFunction>().filter { it.text.contains("dispatch") },
+        )
 
         val textRepresentation = """
             package $filePackage
@@ -127,6 +130,70 @@ object StoreFactoryGenerator {
                 text = textRepresentation,
         )
     }
+
+    private fun createConstructorUserDependencies(dependencyClasses: List<Pair<String?, PsiClass>>): String {
+        val userDependenciesString = dependencyClasses.map { dep ->
+            "private val ${dep.first}: ${dep.second.name},"
+        }.joinToString(separator = "\n") { it }.removeSuffix("\n")
+
+        val mviKotlinDependencies = """
+                    private val storeFactory: StoreFactory,
+                    private val dispatcherProvider: CoroutineDispatcherProvider,
+            """.trimIndent()
+
+        val dependencies = if (userDependenciesString.isEmpty()) {
+            mviKotlinDependencies
+        } else {
+            mviKotlinDependencies + "\n" + userDependenciesString
+        }
+        return dependencies
+    }
+
+    private fun createImportUserDependencies(
+            dependencyClasses: List<Pair<String?, PsiClass>>,
+            stateLightClass: KtLightClass?,
+    ): String {
+        return dependencyClasses
+                .mapNotNull { it.second.qualifiedName }
+                .plus(stateLightClass?.qualifiedName)
+                .map { "import $it" }
+                .joinToString(separator = "\n") { it }
+    }
+
+    private fun generateExecutorFactoryImplementation(
+            storeInterfaceName: String,
+            blocFunctions: List<KtNamedFunction>
+    ): String {
+        val sb = StringBuilder()
+        blocFunctions.forEachIndexed { index, method ->
+            val body = method.bodyExpression
+            val reducerId = PsiTreeUtil.findChildrenOfType(body, PsiElement::class.java)
+                    .filter { it.elementType == KtTokens.IDENTIFIER }
+                    .firstOrNull { it.text.contains("reducer", ignoreCase = true) }
+            val ktNameReferenceExpression = reducerId?.parent as? KtNameReferenceExpression
+            val ktParameter = ktNameReferenceExpression?.resolve() as? KtParameter
+            val ktClass = (ktParameter?.typeReference?.typeElement as? KtUserType)?.referenceExpression?.resolve() as? KtClass
+            val qualifiedName = ktClass?.getQualifiedName()
+            val fName = method.name.orEmpty().replaceFirstChar { it.uppercaseChar() }
+            val bodyText = body?.text.orEmpty()
+            val bodyFormatted = addExtraTabAndJoinToString(bodyText.lines())
+            sb.append("""
+                onIntent<$storeInterfaceName.Intent.$fName> {
+                    /*
+                    $qualifiedName
+                    $bodyFormatted
+                    */
+                }
+            """.trimIndent())
+            if (index != blocFunctions.lastIndex) {
+                sb.append("\n\n")
+            }
+        }
+        return sb.toString()
+    }
+
+    private fun addExtraTabAndJoinToString(lines: List<String>) = lines.first() + "\n" +
+            lines.drop(1).map { line -> "$EXTRA_TAB$line" }.joinToString(separator = "\n") { it }
 
     private fun findCoroutineScopeUsages(
             ktClass: KtClass,
@@ -173,4 +240,6 @@ object StoreFactoryGenerator {
 
         return deps.distinctBy { it.second }
     }
+
+    private const val EXTRA_TAB = "                    "
 }

@@ -10,6 +10,7 @@ import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Computable
 import com.intellij.psi.util.PsiTreeUtil
+import com.lstudio.bloctomvikotlinplugin.migrateDelegatedSuperTypeEntryToSuperTypeEntry
 import com.lstudio.bloctomvikotlinplugin.migration.BlocToStoreMigration
 import org.jetbrains.kotlin.psi.KtClass
 import org.jetbrains.kotlin.psi.KtFile
