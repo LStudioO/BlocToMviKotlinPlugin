@@ -11,8 +11,8 @@ import com.intellij.psi.search.LocalSearchScope
 import com.intellij.psi.search.searches.ReferencesSearch
 import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.psi.util.elementType
-import com.lstudio.bloctomvikotlinplugin.Utils.createKotlinFileFromText
-import com.lstudio.bloctomvikotlinplugin.qualifiedName
+import com.lstudio.bloctomvikotlinplugin.extension.createKotlinFileFromText
+import com.lstudio.bloctomvikotlinplugin.extension.qualifiedName
 import org.jetbrains.kotlin.asJava.classes.KtLightClass
 import org.jetbrains.kotlin.asJava.toLightClass
 import org.jetbrains.kotlin.idea.core.getPackage
@@ -241,5 +241,5 @@ object StoreFactoryGenerator {
         return deps.distinctBy { it.second }
     }
 
-    private const val EXTRA_TAB = "                    "
+    private val EXTRA_TAB = " ".repeat(20)
 }

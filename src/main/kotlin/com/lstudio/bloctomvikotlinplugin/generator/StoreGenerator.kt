@@ -6,9 +6,9 @@ import com.intellij.psi.PsiDirectory
 import com.intellij.psi.PsiMethod
 import com.intellij.psi.PsiPrimitiveType
 import com.intellij.psi.impl.source.PsiClassReferenceType
-import com.lstudio.bloctomvikotlinplugin.Utils.createKotlinFileFromText
-import com.lstudio.bloctomvikotlinplugin.qualifiedName
-import com.lstudio.bloctomvikotlinplugin.toKotlinType
+import com.lstudio.bloctomvikotlinplugin.extension.createKotlinFileFromText
+import com.lstudio.bloctomvikotlinplugin.extension.qualifiedName
+import com.lstudio.bloctomvikotlinplugin.extension.toKotlinType
 import org.jetbrains.kotlin.asJava.classes.KtLightClass
 import org.jetbrains.kotlin.asJava.toLightClass
 import org.jetbrains.kotlin.idea.core.getPackage

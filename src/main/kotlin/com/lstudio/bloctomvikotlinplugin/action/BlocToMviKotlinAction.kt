@@ -10,7 +10,9 @@ import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Computable
 import com.intellij.psi.util.PsiTreeUtil
+import com.lstudio.bloctomvikotlinplugin.extension.isChildOfClass
 import com.lstudio.bloctomvikotlinplugin.migration.BlocToStoreMigration
+import org.jetbrains.kotlin.idea.refactoring.fqName.getKotlinFqName
 import org.jetbrains.kotlin.psi.KtClass
 import org.jetbrains.kotlin.psi.KtFile
 
@@ -34,7 +36,7 @@ class BlocToMviKotlinAction : AnAction() {
 
         val blocEntries = ApplicationManager.getApplication().runReadAction(Computable {
             PsiTreeUtil.collectElements(psiFile) { element ->
-                element is KtClass && isBlocParent(element)
+                element is KtClass && element.isChildOfClass("Bloc")
             }
         }).filterIsInstance<KtClass>()
 
@@ -57,12 +59,6 @@ class BlocToMviKotlinAction : AnAction() {
                 migration.migrate(blocKtClass)
                 notify(project, "Migration of ${blocKtClass.name.orEmpty()} has been finished", NotificationType.INFORMATION)
             }
-        }
-    }
-
-    private fun isBlocParent(element: KtClass): Boolean {
-        return element.superTypeListEntries.any { entry ->
-            entry.typeAsUserType?.referenceExpression?.getReferencedName() == "Bloc"
         }
     }
 

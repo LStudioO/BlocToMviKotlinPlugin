@@ -3,15 +3,17 @@ package com.lstudio.bloctomvikotlinplugin.migration
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
-import com.lstudio.bloctomvikotlinplugin.GradleUtils
-import com.lstudio.bloctomvikotlinplugin.Utils.deleteUnusedImports
-import com.lstudio.bloctomvikotlinplugin.Utils.writeKotlinFile
 import com.lstudio.bloctomvikotlinplugin.action.BlocToMviKotlinAction
+import com.lstudio.bloctomvikotlinplugin.extension.deleteUnusedImports
+import com.lstudio.bloctomvikotlinplugin.extension.writeKotlinFile
 import com.lstudio.bloctomvikotlinplugin.generator.StoreFactoryGenerator
 import com.lstudio.bloctomvikotlinplugin.generator.StoreGenerator
+import com.lstudio.bloctomvikotlinplugin.util.GradleUtils
+import com.lstudio.bloctomvikotlinplugin.util.KoinUtils
 import org.jetbrains.kotlin.asJava.toLightClass
 import org.jetbrains.kotlin.psi.KtClass
 import org.jetbrains.kotlin.psi.KtFile
+import org.jetbrains.plugins.groovy.lang.psi.util.childrenOfType
 
 class BlocToStoreMigration(
         private val project: Project,
@@ -41,9 +43,7 @@ class BlocToStoreMigration(
         val savedStoreFile = project.writeKotlinFile(directory, storeFile)
 
         // Remove unused imports
-        if (savedStoreFile != null) {
-            project.deleteUnusedImports(savedStoreFile)
-        }
+        savedStoreFile?.deleteUnusedImports()
 
         // Generate in-memory StoreFactory file
         val storeFactoryFile = StoreFactoryGenerator.generate(
@@ -58,9 +58,7 @@ class BlocToStoreMigration(
         val savedStoreFactoryFile = project.writeKotlinFile(directory, storeFactoryFile)
 
         // Remove unused imports
-        if (savedStoreFactoryFile != null) {
-            project.deleteUnusedImports(savedStoreFactoryFile)
-        }
+        savedStoreFactoryFile?.deleteUnusedImports()
 
         // Add MVIKotlin dependency
         GradleUtils.addDependencyToKtsFile(
@@ -68,6 +66,12 @@ class BlocToStoreMigration(
                 sameModuleClass = bloc,
                 dependencyLine = "implementation(libs.bundles.mvi.kotlin)",
                 event = event,
+        )
+
+        // Add DI declarations
+        KoinUtils.replaceBlocDiDeclarationWithStore(
+                blocKtClass = bloc,
+                storeFactoryKtClass = storeFactoryFile.childrenOfType<KtClass>().first(),
         )
     }
 
