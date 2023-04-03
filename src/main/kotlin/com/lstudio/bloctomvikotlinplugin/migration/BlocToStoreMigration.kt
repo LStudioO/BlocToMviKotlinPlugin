@@ -1,7 +1,9 @@
 package com.lstudio.bloctomvikotlinplugin.migration
 
+import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
+import com.lstudio.bloctomvikotlinplugin.GradleUtils
 import com.lstudio.bloctomvikotlinplugin.Utils.deleteUnusedImports
 import com.lstudio.bloctomvikotlinplugin.Utils.writeKotlinFile
 import com.lstudio.bloctomvikotlinplugin.action.BlocToMviKotlinAction
@@ -14,6 +16,7 @@ import org.jetbrains.kotlin.psi.KtFile
 class BlocToStoreMigration(
         private val project: Project,
         private val psiFile: KtFile,
+        private val event: AnActionEvent,
 ) {
     fun migrate(bloc: KtClass) {
         val directory = psiFile.containingDirectory ?: return
@@ -58,6 +61,14 @@ class BlocToStoreMigration(
         if (savedStoreFactoryFile != null) {
             project.deleteUnusedImports(savedStoreFactoryFile)
         }
+
+        // Add MVIKotlin dependency
+        GradleUtils.addDependencyToKtsFile(
+                project = project,
+                sameModuleClass = bloc,
+                dependencyLine = "implementation(libs.bundles.mvi.kotlin)",
+                event = event,
+        )
     }
 
     private fun getStateClassFromBloc(blocKtClass: KtClass): KtClass? {

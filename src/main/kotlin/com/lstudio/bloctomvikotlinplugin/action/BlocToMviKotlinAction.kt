@@ -10,7 +10,6 @@ import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Computable
 import com.intellij.psi.util.PsiTreeUtil
-import com.lstudio.bloctomvikotlinplugin.migrateDelegatedSuperTypeEntryToSuperTypeEntry
 import com.lstudio.bloctomvikotlinplugin.migration.BlocToStoreMigration
 import org.jetbrains.kotlin.psi.KtClass
 import org.jetbrains.kotlin.psi.KtFile
@@ -48,7 +47,11 @@ class BlocToMviKotlinAction : AnAction() {
             notify(project, content, NotificationType.INFORMATION)
             LOG.info(content)
 
-            val migration = BlocToStoreMigration(project, psiFile)
+            val migration = BlocToStoreMigration(
+                    project = project,
+                    psiFile = psiFile,
+                    event = event,
+            )
 
             blocEntries.forEach { blocKtClass ->
                 migration.migrate(blocKtClass)
