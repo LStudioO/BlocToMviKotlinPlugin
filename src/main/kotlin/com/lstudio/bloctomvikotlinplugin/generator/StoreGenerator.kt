@@ -1,19 +1,16 @@
 package com.lstudio.bloctomvikotlinplugin.generator
 
-import com.intellij.lang.jvm.JvmParameter
 import com.intellij.openapi.project.Project
 import com.intellij.psi.PsiDirectory
 import com.intellij.psi.PsiMethod
-import com.intellij.psi.PsiPrimitiveType
-import com.intellij.psi.impl.source.PsiClassReferenceType
 import com.lstudio.bloctomvikotlinplugin.extension.createKotlinFileFromText
-import com.lstudio.bloctomvikotlinplugin.extension.qualifiedName
-import com.lstudio.bloctomvikotlinplugin.extension.toKotlinType
-import org.jetbrains.kotlin.asJava.classes.KtLightClass
+import com.lstudio.bloctomvikotlinplugin.extension.getQualifiedName
 import org.jetbrains.kotlin.asJava.toLightClass
 import org.jetbrains.kotlin.idea.core.getPackage
 import org.jetbrains.kotlin.psi.KtClass
 import org.jetbrains.kotlin.psi.KtFile
+import org.jetbrains.kotlin.psi.KtNamedFunction
+import org.jetbrains.kotlin.psi.KtUserType
 
 object StoreGenerator {
     fun generate(
@@ -28,11 +25,17 @@ object StoreGenerator {
 
         val publishFunctions = blocFunctions.filter { it.text.contains("dispatch(") }
         val stateLightClass = stateClass.toLightClass()
-        val functionsWithParams = publishFunctions.filter { it.hasParameters() }
-        val functionsWithoutParams = publishFunctions.filterNot { it.hasParameters() }
+        val functionsWithParams = publishFunctions.filter { it.hasParameters() }.mapNotNull { it.navigationElement as? KtNamedFunction }
+        val functionsWithoutParams = publishFunctions.filterNot { it.hasParameters() }.mapNotNull { it.navigationElement as? KtNamedFunction }
 
-        val intentClassesList: List<String> = createIntentList(functionsWithParams, functionsWithoutParams)
-        val importSection: String = createImports(stateLightClass, functionsWithParams)
+        val intentClassesList: List<String> = createIntentListNew(
+                functionsWithParams,
+                functionsWithoutParams,
+        )
+        val importSection: String = createImportsNew(
+                blocStateName = stateLightClass?.qualifiedName,
+                functionsWithParams = functionsWithParams,
+        )
 
         val intents = StringBuilder()
         intentClassesList.forEachIndexed { index, intent ->
@@ -63,52 +66,52 @@ object StoreGenerator {
         )
     }
 
-    private fun createImports(
-            blocState: KtLightClass?,
-            functionsWithParams: List<PsiMethod>,
+    private fun createImportsNew(
+            blocStateName: String?,
+            functionsWithParams: List<KtNamedFunction>,
     ): String {
-        val importList = listOfNotNull(blocState?.qualifiedName) + functionsWithParams.flatMap { func ->
-            val params = func.parameters
-            params
-                    .filterNot { isInImportIgnoreList(it) }
-                    .filterNot { it.type is PsiPrimitiveType }
-                    .map { it.type.qualifiedName() }
-        }
+        val importList = functionsWithParams.flatMap { func ->
+            val params = func.valueParameters
+            // Parse the param type and its type arguments if exist
+            // Let's assume we have Either<String, Int>
+            // Either - param type
+            // String and Int - type arguments
+            params.mapNotNull { ktParameter ->
+                // Find the param type name
+                val userType = (ktParameter.typeReference?.typeElement as? KtUserType) ?: return@mapNotNull null
+                val paramTypeFullName = userType.getQualifiedName()
+                // Find the type arguments names
+                val typeArgumentNames = userType.typeArguments.map { ktTypeProjection ->
+                    val typeArgumentUserType = ktTypeProjection.typeReference?.typeElement as? KtUserType
+                    typeArgumentUserType?.getQualifiedName()
+                }
+                listOfNotNull(paramTypeFullName) + typeArgumentNames
+            }.flatten().filterNotNull()
+        } + listOfNotNull(blocStateName)
         return importList.distinct().map { "import $it" }.joinToString(separator = "\n") { it }
     }
 
-    private fun createIntentList(
-            functionsWithParams: List<PsiMethod>,
-            functionsWithoutParams: List<PsiMethod>,
+    private fun createIntentListNew(
+            functionsWithParams: List<KtNamedFunction>,
+            functionsWithoutParams: List<KtNamedFunction>,
     ): List<String> {
         val funcWithParText = functionsWithParams.map { func ->
-            val params = func.parameters
+            val params = func.valueParameters
             val funcParams = params.map { param ->
                 val nameText = param.name
-                val typeText = if (param.type is PsiPrimitiveType) {
-                    (param.type as PsiPrimitiveType).toKotlinType()
-                } else {
-                    (param.type as? PsiClassReferenceType)?.name
-                }
+                val typeText = param.typeReference?.text
                 val fullText = "$nameText: $typeText"
                 "val ${fullText},"
             }.joinToString(separator = "\n") { it }
             """
-                data class ${func.name.replaceFirstChar { it.uppercaseChar() }}(
+                data class ${func.name.orEmpty().replaceFirstChar { it.uppercaseChar() }}(
                 $funcParams
                 )
             """.trimIndent()
         }
         val funcWithoutParText = functionsWithoutParams.map { func ->
-            "object ${func.name.replaceFirstChar { it.uppercaseChar() }}"
+            "object ${func.name.orEmpty().replaceFirstChar { it.uppercaseChar() }}"
         }
         return funcWithParText + funcWithoutParText
-    }
-
-    private fun isInImportIgnoreList(param: JvmParameter): Boolean {
-        val ignoreList = listOf(
-                "java.lang.String",
-        )
-        return ignoreList.contains(param.type.qualifiedName())
     }
 }

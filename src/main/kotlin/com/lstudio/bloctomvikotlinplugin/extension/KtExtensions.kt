@@ -1,10 +1,9 @@
 package com.lstudio.bloctomvikotlinplugin.extension
 
 import com.android.tools.idea.kotlin.getQualifiedName
-import org.jetbrains.kotlin.psi.KtClass
-import org.jetbrains.kotlin.psi.KtFile
-import org.jetbrains.kotlin.psi.KtImportDirective
-import org.jetbrains.kotlin.psi.KtPsiFactory
+import org.jetbrains.kotlin.idea.refactoring.fqName.getKotlinFqName
+import org.jetbrains.kotlin.nj2k.postProcessing.resolve
+import org.jetbrains.kotlin.psi.*
 import org.jetbrains.kotlin.resolve.ImportPath
 
 fun KtFile.removeImports(listImport: List<String>) {
@@ -59,3 +58,5 @@ fun KtClass.isChildOfClass(parentClassName: String): Boolean {
         entry.typeAsUserType?.referenceExpression?.getReferencedName() == parentClassName
     }
 }
+
+fun KtUserType.getQualifiedName() = this.referenceExpression?.resolve()?.getKotlinFqName()?.asString()
