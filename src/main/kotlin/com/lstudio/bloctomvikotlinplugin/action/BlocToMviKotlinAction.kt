@@ -12,7 +12,7 @@ import com.intellij.openapi.util.Computable
 import com.intellij.psi.util.PsiTreeUtil
 import com.lstudio.bloctomvikotlinplugin.extension.isChildOfClass
 import com.lstudio.bloctomvikotlinplugin.migration.BlocToStoreMigration
-import org.jetbrains.kotlin.idea.refactoring.fqName.getKotlinFqName
+import com.lstudio.bloctomvikotlinplugin.util.BLOC_CLASS_NAME
 import org.jetbrains.kotlin.psi.KtClass
 import org.jetbrains.kotlin.psi.KtFile
 
@@ -36,7 +36,7 @@ class BlocToMviKotlinAction : AnAction() {
 
         val blocEntries = ApplicationManager.getApplication().runReadAction(Computable {
             PsiTreeUtil.collectElements(psiFile) { element ->
-                element is KtClass && element.isChildOfClass("Bloc")
+                element is KtClass && element.isChildOfClass(BLOC_CLASS_NAME)
             }
         }).filterIsInstance<KtClass>()
 
@@ -46,11 +46,9 @@ class BlocToMviKotlinAction : AnAction() {
             LOG.error(content)
         } else {
             val content = "${blocEntries.size} entries have been found"
-            notify(project, content, NotificationType.INFORMATION)
             LOG.info(content)
 
             val migration = BlocToStoreMigration(
-                    project = project,
                     psiFile = psiFile,
                     event = event,
             )

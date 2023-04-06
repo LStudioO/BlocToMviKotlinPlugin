@@ -7,6 +7,7 @@ import com.intellij.psi.*
 import com.intellij.psi.codeStyle.CodeStyleManager
 import com.intellij.psi.codeStyle.JavaCodeStyleManager
 import com.intellij.psi.impl.source.PsiClassReferenceType
+import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.util.containers.ContainerUtil
 import org.jetbrains.kotlin.idea.KotlinLanguage
 import org.jetbrains.kotlin.idea.inspections.KotlinUnusedImportInspection
@@ -66,6 +67,14 @@ fun Project.createKotlinFileFromText(
         ktFile = file
     }
     return requireNotNull(ktFile)
+}
+
+inline fun <reified T : PsiElement> PsiElement.findChildOfType(): T? {
+    return PsiTreeUtil.findChildOfType(this, T::class.java)
+}
+
+inline fun <reified T : PsiElement> PsiElement.findChildrenOfType(): List<T> {
+    return PsiTreeUtil.findChildrenOfType(this, T::class.java).toList()
 }
 
 private fun KtFile.removeUnusedKotlinImports() {
