@@ -1,5 +1,6 @@
 package com.lstudio.bloctomvikotlinplugin.action
 
+import com.intellij.application.options.CodeStyle
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.actionSystem.AnAction
@@ -9,6 +10,8 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Computable
+import com.intellij.psi.PsiFile
+import com.intellij.psi.codeStyle.CodeStyleSettingsManager
 import com.intellij.psi.util.PsiTreeUtil
 import com.lstudio.bloctomvikotlinplugin.extension.isChildOfClass
 import com.lstudio.bloctomvikotlinplugin.migration.BlocToStoreMigration
@@ -48,6 +51,9 @@ class BlocToMviKotlinAction : AnAction() {
             val content = "${blocEntries.size} entries have been found"
             LOG.info(content)
 
+            // Apply file specific code style to the project
+            applyCodeStyleSettingsFromCurrentFile(psiFile)
+
             val migration = BlocToStoreMigration(
                     psiFile = psiFile,
                     event = event,
@@ -58,6 +64,13 @@ class BlocToMviKotlinAction : AnAction() {
                 notify(project, "Migration of ${blocKtClass.name.orEmpty()} has been finished", NotificationType.INFORMATION)
             }
         }
+    }
+
+    private fun applyCodeStyleSettingsFromCurrentFile(psiFile: PsiFile) {
+        val settingsManager = CodeStyleSettingsManager.getInstance(psiFile.project)
+
+        val projectSettings = CodeStyle.getSettings(psiFile)
+        settingsManager.setTemporarySettings(projectSettings)
     }
 
     private fun notify(project: Project?, content: String, type: NotificationType) {
