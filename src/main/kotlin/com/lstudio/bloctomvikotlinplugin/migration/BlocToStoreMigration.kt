@@ -1,9 +1,13 @@
 package com.lstudio.bloctomvikotlinplugin.migration
 
 import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.runReadAction
 import com.intellij.openapi.diagnostic.logger
+import com.intellij.openapi.progress.ProgressManager
+import com.intellij.openapi.project.Project
 import com.lstudio.bloctomvikotlinplugin.action.BlocToMviKotlinAction
-import com.lstudio.bloctomvikotlinplugin.extension.deleteUnusedImports
+import com.lstudio.bloctomvikotlinplugin.extension.executeWrite
 import com.lstudio.bloctomvikotlinplugin.extension.writeKotlinFile
 import com.lstudio.bloctomvikotlinplugin.generator.StoreFactoryGenerator
 import com.lstudio.bloctomvikotlinplugin.generator.StoreGenerator
@@ -11,8 +15,10 @@ import com.lstudio.bloctomvikotlinplugin.util.BLOC_CLASS_NAME
 import com.lstudio.bloctomvikotlinplugin.util.GradleUtils
 import com.lstudio.bloctomvikotlinplugin.util.PostProcessingUtils
 import org.jetbrains.kotlin.asJava.toLightClass
+import org.jetbrains.kotlin.idea.inspections.KotlinUnusedImportInspection
 import org.jetbrains.kotlin.psi.KtClass
 import org.jetbrains.kotlin.psi.KtFile
+import org.jetbrains.kotlin.psi.KtImportDirective
 import org.jetbrains.plugins.groovy.lang.psi.util.childrenOfType
 
 class BlocToStoreMigration(
@@ -30,6 +36,14 @@ class BlocToStoreMigration(
 
         LOG.info("Name $name")
 
+        // Add MVIKotlin dependency
+        GradleUtils.addDependencyToKtsFile(
+                project = project,
+                sameModuleClass = bloc,
+                dependencyLine = "implementation(libs.bundles.mvi.kotlin)",
+                event = event,
+        )
+
         // Generate in-memory Store file
         val storeCreationResult = StoreGenerator.generate(
                 project = project,
@@ -42,10 +56,10 @@ class BlocToStoreMigration(
         val storeFile = storeCreationResult.file
 
         // Write file
-        val savedStoreFile = project.writeKotlinFile(directory, storeFile)
+        val savedStoreFile = project.writeKotlinFile(directory, storeFile) ?: return
 
-        // Remove unused imports
-        savedStoreFile?.deleteUnusedImports()
+        // Optimize Store imports
+        project.optimizeImports(savedStoreFile)
 
         // Generate in-memory StoreFactory file
         val storeFactoryFile = StoreFactoryGenerator.generate(
@@ -57,18 +71,10 @@ class BlocToStoreMigration(
         )
 
         // Write file
-        val savedStoreFactoryFile = project.writeKotlinFile(directory, storeFactoryFile)
+        val savedStoreFactoryFile = project.writeKotlinFile(directory, storeFactoryFile) ?: return
 
-        // Remove unused imports
-        savedStoreFactoryFile?.deleteUnusedImports()
-
-        // Add MVIKotlin dependency
-        GradleUtils.addDependencyToKtsFile(
-                project = project,
-                sameModuleClass = bloc,
-                dependencyLine = "implementation(libs.bundles.mvi.kotlin)",
-                event = event,
-        )
+        // Optimize StoreFactory imports
+        project.optimizeImports(savedStoreFactoryFile)
 
         // Add DI declarations
         PostProcessingUtils.replaceBlocDiDeclarationWithStore(
@@ -77,14 +83,28 @@ class BlocToStoreMigration(
         )
 
         // Replace usages
-        if (savedStoreFile != null) {
-            PostProcessingUtils.replaceBlocWithStore(
-                    bloc = bloc,
-                    storeFile = savedStoreFile,
-                    storeQualifiedName = storeCreationResult.storeFullQualifierName,
-                    storeIntents = storeCreationResult.intents,
-            )
-        }
+        PostProcessingUtils.replaceBlocWithStore(
+                bloc = bloc,
+                storeFile = savedStoreFile,
+                storeQualifiedName = storeCreationResult.storeFullQualifierName,
+                storeIntents = storeCreationResult.intents,
+        )
+    }
+
+    private fun Project.optimizeImports(file: KtFile) {
+        ProgressManager.getInstance().runProcessWithProgressSynchronously({
+            val unusedImports = runReadAction {
+                KotlinUnusedImportInspection.analyzeImports(file)
+            }
+
+            ApplicationManager.getApplication().invokeAndWait {
+                executeWrite {
+                    unusedImports?.unusedImports?.forEach { importDirective ->
+                        (importDirective as? KtImportDirective)?.delete()
+                    }
+                }
+            }
+        }, "Optimizing imports", false, this)
     }
 
     // TODO: Refactor

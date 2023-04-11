@@ -2,7 +2,9 @@ package com.lstudio.bloctomvikotlinplugin.extension
 
 import com.intellij.lang.jvm.types.JvmType
 import com.intellij.openapi.command.WriteCommandAction
+import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.ThrowableComputable
 import com.intellij.psi.*
 import com.intellij.psi.codeStyle.CodeStyleManager
 import com.intellij.psi.codeStyle.JavaCodeStyleManager
@@ -104,4 +106,13 @@ private fun PsiJavaFile.removeUnusedJavaImports() {
 private fun formatCode(ktFile: KtFile) {
     CodeStyleManager.getInstance(ktFile.project).reformatText(ktFile,
             ContainerUtil.newArrayList(ktFile.textRange))
+}
+
+fun <T, E : Exception> Project.runProcessWithProgressSynchronously(
+        message: String,
+        process: ThrowableComputable<T, E>
+): T {
+    return ProgressManager.getInstance().runProcessWithProgressSynchronously(
+            process, message, false, this
+    )
 }

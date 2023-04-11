@@ -1,6 +1,7 @@
 package com.lstudio.bloctomvikotlinplugin.util
 
 import com.android.tools.idea.kotlin.getQualifiedName
+import com.intellij.openapi.application.runReadAction
 import com.intellij.openapi.project.Project
 import com.intellij.psi.PsiElement
 import com.intellij.psi.codeStyle.CodeStyleManager
@@ -39,71 +40,83 @@ object PostProcessingUtils {
     ) {
         val projectScope = GlobalSearchScope.allScope(blocKtClass.project)
         val primaryConstructor = blocKtClass.primaryConstructor ?: return
+        val project = blocKtClass.project
 
-        // Use ReferencesSearch to find all references to the primary constructor calls
-        val search = ReferencesSearch.search(primaryConstructor, projectScope)
+        val searchCallExpressions = project.runProcessWithProgressSynchronously<List<KtCallExpression>, Exception>("Replacing DI declarations") {
+            runReadAction {
+                // Use ReferencesSearch to find all references to the primary constructor calls
+                val search = ReferencesSearch.search(primaryConstructor, projectScope)
+                // Iterate through the results
+                search.mapNotNull { reference ->
+                    // The reference element of the PSI element that references the ktClass
+                    val referenceElement = reference.element
+
+                    // Take the CALL_EXPRESSION of the constructor
+                    val callExpression = referenceElement.parent as? KtCallExpression ?: return@mapNotNull null
+
+                    // Find the package of the caller function
+                    val lambdaArgument = PsiTreeUtil.getParentOfType(callExpression, KtLambdaArgument::class.java)
+                    val funPackage = (lambdaArgument?.parent?.getChildOfType<KtNameReferenceExpression>()?.resolve() as KtNamedFunction).containingKtFile.packageFqName.asString()
+
+                    // If it's Koin related
+                    if (funPackage.startsWith("org.koin")) {
+                        callExpression
+                    } else {
+                        null
+                    }
+                }
+            }
+        }
 
         // Iterate through the results
-        search.forEach { reference ->
-            // The reference element of the PSI element that references the ktClass
-            val referenceElement = reference.element
-            val parentFile = referenceElement.containingFile as? KtFile ?: return@forEach
+        searchCallExpressions.forEach { callExpression ->
+            val factory = KtPsiFactory(project)
+            project.executeWrite {
+                // Find the scope Koin function (factory, single, scoped, etc.)
+                val scopeFunction = PsiTreeUtil.getParentOfType(callExpression, KtCallExpression::class.java)
+                        ?: return@executeWrite
 
-            // Take the CALL_EXPRESSION of the constructor
-            val callExpression = referenceElement.parent as? KtCallExpression ?: return@forEach
+                val element = callExpression.originalElement
 
-            // Find the package of the caller function
-            val lambdaArgument = PsiTreeUtil.getParentOfType(callExpression, KtLambdaArgument::class.java)
-            val funPackage = (lambdaArgument?.parent?.getChildOfType<KtNameReferenceExpression>()?.resolve() as KtNamedFunction).containingKtFile.packageFqName.asString()
+                val parentFile = element.containingFile as? KtFile ?: return@executeWrite
 
-            // If it's Koin related
-            if (funPackage.startsWith("org.koin")) {
-                val factory = KtPsiFactory(blocKtClass.project)
-                blocKtClass.project.executeWrite {
-                    // Find the scope Koin function (factory, single, scoped, etc.)
-                    val scopeFunction = PsiTreeUtil.getParentOfType(callExpression, KtCallExpression::class.java)
-                            ?: return@executeWrite
+                val storeFactoryElement = factory.createBlock(storeFactoryKtClass.toEmptyObjectDeclaration())
+                        .getChildOfType<KtCallExpression>() ?: return@executeWrite
 
-                    val element = callExpression.originalElement
+                // Replace Bloc declaration with Store Factory declaration
+                element.replace(storeFactoryElement)
 
-                    val storeFactoryElement = factory.createBlock(storeFactoryKtClass.toEmptyObjectDeclaration())
-                            .getChildOfType<KtCallExpression>() ?: return@executeWrite
+                // Get the scope function name
+                val scopeName = (scopeFunction.referenceExpression() as? KtNameReferenceExpression)?.getReferencedName()
+                        ?: "factory"
 
-                    // Replace Bloc declaration with Store Factory declaration
-                    element.replace(storeFactoryElement)
-
-                    // Get the scope function name
-                    val scopeName = (scopeFunction.referenceExpression() as? KtNameReferenceExpression)?.getReferencedName()
-                            ?: "factory"
-
-                    // Create a new declaration with the same scope name for the Store
-                    val newElement1 = factory.createBlock("""
+                // Create a new declaration with the same scope name for the Store
+                val newElement1 = factory.createBlock("""
                         $scopeName {
                         get<${storeFactoryKtClass.name}>().create()
                         }
                     """.trimIndent()).getChildOfType<KtCallExpression>() ?: return@executeWrite
 
-                    // Insert the declaration after the factory declaration
-                    scopeFunction.parent.addAfter(newElement1, scopeFunction)
-                    scopeFunction.parent.addAfter(factory.createNewLine(), scopeFunction)
+                // Insert the declaration after the factory declaration
+                scopeFunction.parent.addAfter(newElement1, scopeFunction)
+                scopeFunction.parent.addAfter(factory.createNewLine(), scopeFunction)
 
-                    // Add imports
-                    parentFile.addImports(
-                            listImport = listOfNotNull(
-                                    storeFactoryKtClass.getQualifiedName(),
-                            ),
-                    )
+                // Add imports
+                parentFile.addImports(
+                        listImport = listOfNotNull(
+                                storeFactoryKtClass.getQualifiedName(),
+                        ),
+                )
 
-                    // Remove Bloc import
-                    parentFile.removeImports(
-                            listImport = listOfNotNull(
-                                    blocKtClass.getQualifiedName()
-                            ),
-                    )
+                // Remove Bloc import
+                parentFile.removeImports(
+                        listImport = listOfNotNull(
+                                blocKtClass.getQualifiedName()
+                        ),
+                )
 
-                    // Reformat file
-                    CodeStyleManager.getInstance(parentFile.project).reformat(parentFile)
-                }
+                // Reformat file
+                CodeStyleManager.getInstance(project).reformat(parentFile)
             }
         }
     }
@@ -168,27 +181,40 @@ object PostProcessingUtils {
         val project = blocUser.usageClass.project
         val projectScope = GlobalSearchScope.projectScope(project)
         val primaryConstructor = blocUser.usageClass.primaryConstructor ?: return
-        // Find usages of the constructor
-        val usages = ReferencesSearch.search(primaryConstructor, projectScope)
-        val psiFactory = KtPsiFactory(project)
-        usages.forEach { reference ->
-            val element = reference.element
-            if (element is KtNameReferenceExpression) {
-                // If the Bloc is referenced in a value parameter
-                val parent = element.parentOfType<KtCallExpression>() ?: return@forEach
-                val valueArguments = parent.valueArguments
-                // Find the old bloc argument
-                val foundArg = valueArguments.find { it.getArgumentName()?.asName?.identifier == blocUser.oldName }
-                        ?: return@forEach
-                val argName = foundArg.getArgumentName() ?: return@forEach
-                val newArgName = psiFactory.createArgument(
-                        expression = null,
-                        name = Name.identifier(blocUser.newName)
-                ).getArgumentName() ?: return@forEach
-                // Replace
-                project.executeWrite {
-                    argName.replace(newArgName)
+
+        // Find usages
+        val usageArgNames = project.runProcessWithProgressSynchronously<List<KtValueArgumentName>, Exception>("Renaming the bloc name") {
+            runReadAction {
+                // Find usages of the constructor
+                val results = ReferencesSearch.search(primaryConstructor, projectScope)
+
+                results.mapNotNull { reference ->
+                    val element = reference.element
+                    return@mapNotNull if (element is KtNameReferenceExpression) {
+                        // If the Bloc is referenced in a value parameter
+                        val parent = element.parentOfType<KtCallExpression>() ?: return@mapNotNull null
+                        val valueArguments = parent.valueArguments
+                        // Find the old bloc argument
+                        val foundArg = valueArguments.find { it.getArgumentName()?.asName?.identifier == blocUser.oldName }
+                                ?: return@mapNotNull null
+                        val argName = foundArg.getArgumentName() ?: return@mapNotNull null
+                        argName
+                    } else {
+                        null
+                    }
                 }
+            }
+        }
+
+        val psiFactory = KtPsiFactory(project)
+        usageArgNames.forEach { argName ->
+            val newArgName = psiFactory.createArgument(
+                    expression = null,
+                    name = Name.identifier(blocUser.newName)
+            ).getArgumentName() ?: return@forEach
+            // Replace
+            project.executeWrite {
+                argName.replace(newArgName)
             }
         }
     }
@@ -202,28 +228,35 @@ object PostProcessingUtils {
         storeIntents.forEach { storeIntent ->
             val namedFunction = storeIntent.originalFunction
             val functionName = namedFunction.name ?: return@forEach
-
-            // Create a PsiFactory
             val psiFactory = KtPsiFactory(bloc.project)
 
-            val factory = KotlinFindUsagesHandlerFactory(namedFunction.project)
+            val elementsToReplace = project.runProcessWithProgressSynchronously<List<KtCallExpression>, Exception>("Replacing the bloc calls") {
+                runReadAction {
+                    val elementsToReplace = mutableListOf<KtCallExpression>()
 
-            // Create a KotlinFindUsagesHandler for the named function
-            val findUsagesHandler = factory.createFindUsagesHandler(namedFunction, false)
+                    // Create a PsiFactory
 
-            val elementsToReplace = mutableListOf<KtCallExpression>()
-            // Create a processor to handle the usages
-            val processor = com.intellij.util.Processor<UsageInfo> { usage ->
-                // Save call expressions
-                usage.element?.parentOfType<KtCallExpression>()?.let { elementsToReplace.add(it) }
-                true
+                    val factory = KotlinFindUsagesHandlerFactory(namedFunction.project)
+
+                    // Create a KotlinFindUsagesHandler for the named function
+                    val findUsagesHandler = factory.createFindUsagesHandler(namedFunction, false)
+
+                    // Create a processor to handle the usages
+                    val processor = com.intellij.util.Processor<UsageInfo> { usage ->
+                        // Save call expressions
+                        usage.element?.parentOfType<KtCallExpression>()?.let { elementsToReplace.add(it) }
+                        true
+                    }
+
+                    // create find usages options
+                    val options = KotlinFunctionFindUsagesOptions(project)
+
+                    // process the usages of the named function
+                    findUsagesHandler.processElementUsages(namedFunction, processor, options)
+
+                    elementsToReplace
+                }
             }
-
-            // create find usages options
-            val options = KotlinFunctionFindUsagesOptions(project)
-
-            // process the usages of the named function
-            findUsagesHandler.processElementUsages(namedFunction, processor, options)
 
             project.executeWrite {
                 elementsToReplace.forEach { element ->
@@ -268,23 +301,28 @@ object PostProcessingUtils {
         val psiFactory = KtPsiFactory(project)
         val newReference = psiFactory.createSimpleName("state")
 
-        // Find usages of the property
-        val usages = ReferencesSearch.search(element).findAll()
+        val filteredUsages = project.runProcessWithProgressSynchronously<List<PsiElement>, Exception>("Replacing currentState references") {
+            // Find usages of the property
+            runReadAction {
+                val usages = ReferencesSearch.search(element).findAll()
+
+                usages.map { it.element }
+                        .filterIsInstance<KtNameReferenceExpression>()
+                        .filter { reference ->
+                            // Let assume the expression is bloc.currentState
+                            // Find the name of the expression (bloc)
+                            val callerNameExpression = (reference.parentOfType<KtDotQualifiedExpression>())?.firstChild as? KtNameReferenceExpression
+                            // Get the type of the caller
+                            val callerType = (callerNameExpression?.resolve() as? KtParameter)?.type()
+                            callerType?.getQualifiedName()?.asString() == bloc.getQualifiedName()
+                        }
+            }
+        }
 
         project.executeWrite {
-            usages.map { it.element }
-                    .filterIsInstance<KtNameReferenceExpression>()
-                    .filter { reference ->
-                        // Let assume the expression is bloc.currentState
-                        // Find the name of the expression (bloc)
-                        val callerNameExpression = (reference.parentOfType<KtDotQualifiedExpression>())?.firstChild as? KtNameReferenceExpression
-                        // Get the type of the caller
-                        val callerType = (callerNameExpression?.resolve() as? KtParameter)?.type()
-                        callerType?.getQualifiedName()?.asString() == bloc.getQualifiedName()
-                    }
-                    .forEach { reference ->
-                        reference.replace(newReference)
-                    }
+            filteredUsages.forEach { reference ->
+                reference.replace(newReference)
+            }
         }
     }
 
@@ -299,23 +337,28 @@ object PostProcessingUtils {
         val psiFactory = KtPsiFactory(project)
         val newReference = psiFactory.createSimpleName("states")
 
-        // Find usages of the property
-        val usages = ReferencesSearch.search(element).findAll()
+        val filteredUsages = project.runProcessWithProgressSynchronously<List<PsiElement>, Exception>("Replacing asFlow references") {
+            runReadAction {
+                // Find usages of the property
+                val usages = ReferencesSearch.search(element).findAll()
+
+                usages.map { it.element }
+                        .filterIsInstance<KtNameReferenceExpression>()
+                        .filter { reference ->
+                            // Let assume the expression is bloc.currentState
+                            // Find the name of the expression (bloc)
+                            val callerFunc = reference.parentOfType<KtCallExpression>() ?: return@filter false
+                            val callerNameExpression = (callerFunc.parentOfType<KtDotQualifiedExpression>())?.firstChild as? KtNameReferenceExpression
+                            // Get the type of the caller
+                            val callerType = (callerNameExpression?.resolve() as? KtParameter)?.type()
+                            callerType?.getQualifiedName()?.asString() == bloc.getQualifiedName()
+                        }
+                        .mapNotNull { it.parentOfType<KtCallExpression>() }
+            }
+        }
 
         project.executeWrite {
-            val references = usages.map { it.element }
-                    .filterIsInstance<KtNameReferenceExpression>()
-                    .filter { reference ->
-                        // Let assume the expression is bloc.currentState
-                        // Find the name of the expression (bloc)
-                        val callerFunc = reference.parentOfType<KtCallExpression>() ?: return@filter false
-                        val callerNameExpression = (callerFunc.parentOfType<KtDotQualifiedExpression>())?.firstChild as? KtNameReferenceExpression
-                        // Get the type of the caller
-                        val callerType = (callerNameExpression?.resolve() as? KtParameter)?.type()
-                        callerType?.getQualifiedName()?.asString() == bloc.getQualifiedName()
-                    }
-                    .mapNotNull { it.parentOfType<KtCallExpression>() }
-            val newRefs = references.map { reference ->
+            val newRefs = filteredUsages.map { reference ->
                 reference.replace(newReference) as KtElement
             }
             newRefs.forEach { ref ->
@@ -425,46 +468,69 @@ object PostProcessingUtils {
             newClass: KtClass,
             newName: (String) -> String,
     ): List<BlocClassUsageWithName> {
+        data class ValueParamResult(
+                val valueParamNode: KtParameter,
+                val typeReference: KtTypeReference,
+        )
+
         // A list of classes where Bloc was replaced with Store
         val modifiedClasses = mutableListOf<BlocClassUsageWithName>()
         val project = oldClass.project
-        project.executeWrite {
-            val projectScope = GlobalSearchScope.projectScope(project)
-            // Find usages
-            val usages = ReferencesSearch.search(oldClass, projectScope)
-            usages.forEach { reference ->
-                val element = reference.element
-                if (element is KtNameReferenceExpression) {
-                    // If the Bloc is referenced in a value parameter
-                    val valueParamNode = element.parentOfType<KtParameter>() ?: return@forEach
-                    val typeReference = element.parentOfType<KtTypeReference>() ?: return@forEach
-                    val nameNode = valueParamNode.nameIdentifier ?: return@forEach
-                    // Bloc name
-                    val oldName = nameNode.text.orEmpty()
-                    // Get a factory to create a new reference and identified
-                    val ktFactory = KtPsiFactory(project)
-                    // Create a new identifier for the future Store based on the Bloc name
-                    val newStoreName = newName.invoke(oldName)
-                    val newNameElement = ktFactory.createNameIdentifier(newStoreName)
-                    // Replace the identifier
-                    nameNode.replace(newNameElement)
-                    // Replace the Bloc reference with the Store reference
-                    val fullName = newClass.fqName?.asString() ?: return@forEach
-                    val newReference = ktFactory.createType(fullName)
-                    typeReference.replace(newReference) as KtTypeReference
-                    // Save classes where Bloc was replaced with Store
-                    val ktClassWithReference = valueParamNode.containingClass()
-                    if (ktClassWithReference != null) {
-                        val item = BlocClassUsageWithName(
-                                usageClass = ktClassWithReference,
-                                newName = newStoreName,
-                                oldName = oldName,
-                        )
-                        modifiedClasses.add(item)
 
-                        // Replace the old bloc identifier in the class
-                        ktClassWithReference.replaceIdentifier(oldName, newStoreName)
+        // Find usages
+        val usages = project.runProcessWithProgressSynchronously<List<ValueParamResult>, Exception>("Replacing the bloc usages") {
+            runReadAction {
+                val projectScope = GlobalSearchScope.projectScope(project)
+                val results = ReferencesSearch.search(oldClass, projectScope)
+
+                results.mapNotNull { reference ->
+                    val element = reference.element
+                    return@mapNotNull if (element is KtNameReferenceExpression) {
+                        // If the Bloc is referenced in a value parameter
+                        val valueParamNode = element.parentOfType<KtParameter>() ?: return@mapNotNull null
+                        val typeReference = element.parentOfType<KtTypeReference>() ?: return@mapNotNull null
+                        ValueParamResult(
+                                valueParamNode = valueParamNode,
+                                typeReference = typeReference,
+                        )
+                    } else {
+                        null
                     }
+                }
+            }
+        }
+
+        project.executeWrite {
+            usages.forEach { data ->
+                // If the Bloc is referenced in a value parameter
+                val valueParamNode = data.valueParamNode
+                val typeReference = data.typeReference
+                val nameNode = valueParamNode.nameIdentifier ?: return@forEach
+                // Bloc name
+                val oldName = nameNode.text.orEmpty()
+                // Get a factory to create a new reference and identified
+                val ktFactory = KtPsiFactory(project)
+                // Create a new identifier for the future Store based on the Bloc name
+                val newStoreName = newName.invoke(oldName)
+                val newNameElement = ktFactory.createNameIdentifier(newStoreName)
+                // Replace the identifier
+                nameNode.replace(newNameElement)
+                // Replace the Bloc reference with the Store reference
+                val fullName = newClass.fqName?.asString() ?: return@forEach
+                val newReference = ktFactory.createType(fullName)
+                typeReference.replace(newReference) as KtTypeReference
+                // Save classes where Bloc was replaced with Store
+                val ktClassWithReference = valueParamNode.containingClass()
+                if (ktClassWithReference != null) {
+                    val item = BlocClassUsageWithName(
+                            usageClass = ktClassWithReference,
+                            newName = newStoreName,
+                            oldName = oldName,
+                    )
+                    modifiedClasses.add(item)
+
+                    // Replace the old bloc identifier in the class
+                    ktClassWithReference.replaceIdentifier(oldName, newStoreName)
                 }
             }
         }

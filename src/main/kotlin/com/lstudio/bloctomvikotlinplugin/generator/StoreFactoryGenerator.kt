@@ -232,7 +232,7 @@ object StoreFactoryGenerator {
 
         val deps = params.flatMap { param ->
             val type = param.type as? PsiClassReferenceType ?: return@flatMap emptyList<Pair<String?, PsiClass>>()
-            val subDeps = type.resolve()?.constructors?.first()?.parameters?.mapNotNull { p ->
+            val subDeps = type.resolve()?.constructors?.firstOrNull()?.parameters?.mapNotNull { p ->
                 p.name to ((p.type as? PsiClassReferenceType)?.resolve() ?: return@mapNotNull null)
             }
             return@flatMap subDeps.orEmpty()
